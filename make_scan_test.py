@@ -1,6 +1,6 @@
 import pymupdf
 
-src = pymupdf.open('data/raw/PMKisanSamanNidhi.pdf')
+src = pymupdf.open('data/raw/union_budget_analysis_2026_27.pdf')
 out = pymupdf.open()
 for i in range(3):
     pix = src[i].get_pixmap(dpi=110)

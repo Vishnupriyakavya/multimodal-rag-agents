@@ -2,7 +2,7 @@ import difflib
 import json
 import pymupdf
 
-src = pymupdf.open('data/raw/pmkisan_guidelines.pdf')
+src = pymupdf.open('data/raw/union_budget_analysis_2026_27.pdf')
 cache = json.load(open('cache/ocr.json', encoding='utf-8'))
 
 for i in range(3):
