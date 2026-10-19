@@ -2,9 +2,33 @@ import streamlit as st
 from pathlib import Path
 from src.ingest import ingest_pdf, col
 from src.rag import answer
+from src.preview import render_source
 
-st.set_page_config(page_title='Document Assistant', page_icon='📄')
+st.set_page_config(page_title='Document Assistant', page_icon='📄', layout='wide')
 st.title('Document Assistant')
+
+@st.cache_data(show_spinner=False)
+def cached_preview(source, page_no, chunk, kind):
+    return render_source(source, page_no, chunk, kind)
+
+def show_sources(hits):
+    top = hits[:3]
+    labels = [h['meta']['source'][:20] + ' p.' + str(h['meta']['page']) for h in top]
+    for tab, h in zip(st.tabs(labels), top):
+        with tab:
+            m = h['meta']
+            st.caption('Type: ' + m['type'] + ' | ' + m['source'] + ' | page ' + str(m['page']))
+            png, found = cached_preview(m['source'], m['page'], h['text'], m['type'])
+            if png is None:
+                st.warning('Original PDF not found in data/raw')
+            else:
+                st.image(png)
+                if m['type'] in ('text', 'table') and not found:
+                    st.caption('Exact highlight not found, showing the full page.')
+                if m['type'] in ('scan', 'chart'):
+                    st.caption('Shown without highlight because this text comes from an image.')
+            with st.expander('Retrieved text'):
+                st.markdown(h['text'][:1500])
 
 if 'history' not in st.session_state:
     st.session_state.history = []
@@ -26,9 +50,7 @@ for turn in st.session_state.history:
     with st.chat_message('assistant'):
         st.write(turn['a'])
         with st.expander('Sources'):
-            for h in turn['hits']:
-                st.write(h['meta']['source'], '| page', h['meta']['page'], '|', h['meta']['type'])
-                st.caption(h['text'][:300])
+            show_sources(turn['hits'])
 
 q = st.chat_input('Ask a question about your documents')
 if q:
