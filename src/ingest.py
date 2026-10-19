@@ -85,23 +85,62 @@ def ocr_page(page, name, cache):
     time.sleep(4)          # stay under the free-tier rate limit
     return text
 
-def ingest_pdf(path, tables=True, ocr=True):
+VIS_PROMPT = (
+    'Look at this page. If it contains charts, graphs, flowcharts, diagrams, maps or infographics, '
+    'describe each one in detail. For charts: title, axes, units, key numbers and trends. '
+    'For flowcharts and diagrams: every box and arrow, in order, with the text inside each. '
+    'Do not describe ordinary paragraphs, tables or logos. '
+    'If the page has no chart or diagram, reply with exactly NONE.'
+)
+
+def has_visual(page):
+    # a large embedded image, or many vector drawing strokes (flowcharts are often vector)
+    page_area = page.rect.width * page.rect.height
+    try:
+        for info in page.get_image_info():
+            b = pymupdf.Rect(info['bbox'])
+            if b.width * b.height > 0.05 * page_area:
+                return True
+    except Exception:
+        pass
+    try:
+        return len(page.get_drawings()) > 60
+    except Exception:
+        return False
+
+def caption_visuals(page, name, cache):
+    key = name + '|' + str(page.number + 1) + '|vis'
+    if key in cache:
+        return cache[key]
+    png = page.get_pixmap(dpi=150).tobytes('png')
+    for attempt in range(3):
+        try:
+            text = (ask_with_image(png, VIS_PROMPT) or '').strip()
+            break
+        except Exception as e:
+            print('  caption retry', attempt + 1, 'on page', page.number + 1, ':', e)
+            time.sleep(10 * (attempt + 1))
+    else:
+        return ''          # do not cache a failure
+    cache[key] = text      # NONE is cached too, so a page is never checked twice
+    save_cache(cache)
+    time.sleep(4)
+    return text
+
+def ingest_pdf(path, tables=True, ocr=True, visuals=True):
     doc = pymupdf.open(path)
     name = Path(path).name
-    cache = load_cache() if ocr else {}
+    cache = load_cache() if (ocr or visuals) else {}
     ids, texts, metas = [], [], []
-    counts = {'text': 0, 'table': 0, 'scan': 0}
+    counts = {'text': 0, 'table': 0, 'scan': 0, 'chart': 0}
     for page_no, page in enumerate(doc, start=1):
         pieces = []
         if ocr and is_scanned(page):
             print('  OCR on', name, 'page', page_no)
             ocr_text = ocr_page(page, name, cache).strip()
             if ocr_text:
-                if len(ocr_text) <= 1500:
-                    pieces.append((ocr_text, 'scan'))
-                else:
-                    for c in chunk_text(ocr_text, 1200, 150):
-                        pieces.append((c, 'scan'))
+                for c in chunk_text(ocr_text, 1200, 150):
+                    pieces.append((c, 'scan'))
         else:
             text = page.get_text().strip()
             if text:
@@ -110,6 +149,12 @@ def ingest_pdf(path, tables=True, ocr=True):
             if tables:
                 for t in extract_tables(page):
                     pieces.append((t, 'table'))
+            if visuals and has_visual(page):
+                print('  checking figures on', name, 'page', page_no)
+                cap = caption_visuals(page, name, cache)
+                if cap and not cap.upper().startswith('NONE'):
+                    for c in chunk_text(cap, 1200, 150):
+                        pieces.append(('Figure description (page ' + str(page_no) + '): ' + c, 'chart'))
         for j, (content, kind) in enumerate(pieces):
             ids.append(name + '-p' + str(page_no) + '-' + kind + str(j))
             texts.append(content)
@@ -119,8 +164,4 @@ def ingest_pdf(path, tables=True, ocr=True):
         col.upsert(ids=ids, documents=texts, metadatas=metas,
                    embeddings=embed_passages(texts))
     print('Ingested', name, '-', counts['text'], 'text,', counts['table'], 'table,',
-          counts['scan'], 'scan chunks')
-
-if __name__ == '__main__':
-    for pdf in Path('data/raw').glob('*.pdf'):
-        ingest_pdf(str(pdf))
+          counts['scan'], 'scan,', counts['chart'], 'chart chunks')
