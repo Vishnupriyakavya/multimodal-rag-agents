@@ -27,7 +27,7 @@ for turn in st.session_state.history:
         st.write(turn['a'])
         with st.expander('Sources'):
             for h in turn['hits']:
-                st.write(h['meta']['source'], '| page', h['meta']['page'])
+                st.write(h['meta']['source'], '| page', h['meta']['page'], '|', h['meta']['type'])
                 st.caption(h['text'][:300])
 
 q = st.chat_input('Ask a question about your documents')
